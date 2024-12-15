@@ -91,4 +91,5 @@ Attention: In the quantum machine learning part we are now bringing nonlinearity
 We can also just repeat only part of the encoding (input features). 
 The idea is that they should be uncorrelated (independent) and then we can repeat them.
 
-Next to nonlinearity by repeating the encoding (maybe the most easy way) we can also introduce nonlinearity by using ancilla qubits (extra qubits = "ancillas"). 
+Next to nonlinearity by repeating the encoding (maybe the most easy way) we can also introduce nonlinearity by using ancilla qubits (extra qubits = "ancillas") with tracing out:
+In general the density matrix of the ancilla qubit which gets introduced to the system behaves like a normal linear operator (like the rotation operation). The key relies in the tracing out of the ancilla qubit.
