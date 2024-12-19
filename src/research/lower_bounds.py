@@ -97,7 +97,7 @@ optimal_n_image = optimal_repetitions(fourier_rank_image)
 print(f"Optimal repetition: {optimal_n_image}")
 
 
-# 3. Tabular data (order doesn't matter)
+# 3. Tabular data (order doesn't matter) TODO
 import pandas as pd
 
 # Beispiel-Daten
