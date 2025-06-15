@@ -3,138 +3,168 @@ Dataset Infos:
 - Includes multiple companies stock data including Open, Clode, High, Low, Volume
 - Dates as timestamps
 => Requires nonlinearity to capture the stock price movements
+
+Main idea:
+Trying to predict close prices (feature) for NASDAQ
 """
 
 import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
-from qiskit import ClassicalRegister, QuantumRegister
+from qiskit import QuantumRegister, ClassicalRegister, QuantumCircuit
 from qiskit.providers.basic_provider import BasicSimulator  
-from qiskit.primitives import Sampler
 from qiskit_algorithms.optimizers import COBYLA # From Qiskit tutorial
-from qiskit.circuit import QuantumCircuit, Parameter, ParameterVector
-
-
-stock_data = pd.read_csv('C:/Users/lucam/OneDrive/Desktop/ZHAW/Semester_5/QI/Project/git/Quantum-Computing-Data-Repetition/src/experiments/serial_data/data/indexData.csv')  # Replace with the actual file path
-close_prices = stock_data['Close'].values  # feature = close prices
-
-x = np.arange(len(close_prices)) 
-
-
-
-# Still need to implement it. Following code is just experimenting around.
-# Create custom feature map or using ZZFeatureMap
-
-
-
-# data preprocessing
-x_normalized = (x - np.min(x)) / (np.max(x) - np.min(x))  
-target_y = close_prices 
-
-
-def target_function(x, scaling=1, coeffs=None, coeff0=None):
-    res = coeff0
-    for idx, coeff in enumerate(coeffs):
-        exponent = 1j * scaling * (idx + 1) * x
-        conj_coeff = np.conjugate(coeff)
-        res += coeff * np.exp(exponent) + conj_coeff * np.exp(-exponent)
-    return np.real(res)
-
-
-def quantum_model(r, scaling=1):
-    """
-    Create a quantum circuit for nonlinear regression (Fourier series approximation).
-    r: Number of encoding repetitions.
-    """
-
-    params = ParameterVector('θ', length=3 * (r + 1))  
-    x_param = Parameter('x')  # data input parameter
-
-    qr = QuantumRegister(1)  
-    cr = ClassicalRegister(1)  
-    qc = QuantumCircuit(qr, cr)
-
-    # draw the circuit
-    qc.draw(output='mpl')
-
-    for i in range(r):
-        qc.rx(scaling * x_param, qr[0])  # data encoding via R_x
-        qc.rz(params[3 * i], qr[0])
-        qc.ry(params[3 * i + 1], qr[0])
-        qc.rz(params[3 * i + 2], qr[0])
-
-    qc.rz(params[3 * r], qr[0])
-    qc.ry(params[3 * r + 1], qr[0])
-    qc.rz(params[3 * r + 2], qr[0])
-
-    qc.measure(qr, cr)
-
-    return qc, params, x_param
-
-# From tutorial
-def cost_function(params_values, circuit, params, x_param, x_vals, target_vals):
-    mse = 0
-    sampler = Sampler()
-    for x_val, y_target in zip(x_vals, target_vals):
-        bound_circuit = circuit.assign_parameters({params: params_values, x_param: x_val})
-
-        result = sampler.run(bound_circuit).result()
-        quasi_dists = result.quasi_dists
-        
-        if len(quasi_dists) == 0 or any(np.isnan(prob) or prob == 0 for _, prob in quasi_dists[0].items()):
-            print(f"Error: Invalid quasi distribution for x = {x_val}, skipping")
-            mse += 1000000  # Adding a large cost for invalid predictions
-            continue
-        
-        outcome_distribution = list(quasi_dists[0].items())
-        
-        if len(outcome_distribution) == 0:
-            print(f"Error: Empty outcome distribution for x = {x_val}, skipping")
-            mse += 1000000  # Adding a large cost for empty distribution
-            continue
-        
-        prediction = int(outcome_distribution[np.argmax([prob for _, prob in outcome_distribution])][0])
-
-        mse += (prediction - y_target) ** 2
-
-    mse /= len(x_vals)
-    print(f"Current MSE: {mse}")
-    return mse
-
-r = 1  
-qc, params, x_param = quantum_model(r)
+from qiskit.circuit import Parameter, ParameterVector
+from qiskit.providers.basic_provider import BasicSimulator
+from scipy.signal import argrelextrema
 
 np.random.seed(42)
-initial_params = 2 * np.pi * np.random.rand(len(params))
-
-optimizer = COBYLA(maxiter=20)
-result = optimizer.minimize(
-    fun=lambda params_vals: cost_function(params_vals, qc, params, x_param, x_normalized, target_y),
-    x0=initial_params
-)
-
-# print("Optimized parameters:", result.x)
-
-# evaluate the model
-predictions = []
-backend = BasicSimulator()
-sampler = Sampler()
-
-for x_val in x_normalized:
-    bound_circuit = qc.assign_parameters({params: result.x, x_param: x_val})
-    
-    result = sampler.run(bound_circuit).result()
-    quasi_dists = result.quasi_dists
-    
-    outcome_distribution = list(quasi_dists[0].items())
-    prediction = int(outcome_distribution[np.argmax([prob for _, prob in outcome_distribution])][0])
-    predictions.append(prediction)
 
 
-plt.plot(x, target_y, c='black', label="Target")
-plt.plot(x, predictions, c='blue', label="Prediction")
-plt.scatter(x, target_y, facecolor='white', edgecolor='black')
-plt.ylim(min(target_y) - 1, max(target_y) + 1)
-plt.title("Trained Quantum Model vs Target")
+# parameters for encoding function phi and encoding function definitions (as in the paper "Input Redundancy for Parameterized Quantum Circuits" described)
+a = 1
+b = 0
+
+def phi_identity(x): return x
+def phi_arcsin(x): return np.arcsin((a*x + b) / (2 * np.pi))
+
+
+# load dataset
+stock_data = pd.read_csv('C:/Users/lucam/OneDrive/Desktop/ZHAW/Semester_5/QI/Project/git/Quantum-Computing-Data-Repetition/src/experiments/serial_data/data/indexData.csv')  
+nasdaq_data = stock_data[stock_data['Index'] == 'IXIC']
+close_prices = nasdaq_data['Close'].values  
+x = np.arange(len(close_prices)) 
+"""plt.figure(figsize=(10, 6))
+plt.plot(x, close_prices)
+plt.title("NASDAQ Close Prices")
+plt.xlabel("Time")
+plt.ylabel("Close price")
+plt.show()"""
+
+
+
+# analysis for lower bound
+order = 200
+local_minima = argrelextrema(close_prices, np.less, order=order)[0]
+local_maxima = argrelextrema(close_prices, np.greater, order=order)[0]
+"""plt.figure(figsize=(10, 6))
+plt.plot(close_prices, label="Close Prices")
+plt.scatter(local_minima, close_prices[local_minima], marker='o', color='red', label="Local Minima")
+plt.scatter(local_maxima, close_prices[local_maxima], marker='o', color='green', label="Local Maxima")
+plt.title("Local Minima and Maxima of Stock Prices")
+plt.xlabel("Time")
+plt.ylabel("Close Price")
 plt.legend()
+plt.show()"""
+num_extrema = len(local_minima) + len(local_maxima)
+print(f"Number of local extrema: {num_extrema}", f"Number of data points: {len(close_prices)}")
+
+# loss functions for training
+def square_loss(targets, predictions):
+    loss = 0
+    for t, p in zip(targets, predictions):
+        loss = loss + (t - p) ** 2
+    loss = loss / len(targets)
+    return 0.5 * loss
+
+
+# target function which the quantum model has to fit
+scaling = 2*np.pi #  4 * np.pi  # period of the target function (fourier series)
+def target_function(x): return close_prices[int(x)] / scaling
+
+
+# serial quantum model
+def serial_quantum_model(weights, x=None):
+    weights_reshaped = weights.reshape(-1, 3)
+    
+    # 1 qubit, 1 classical bit
+    qr = QuantumRegister(1, 'q')
+    cr = ClassicalRegister(1, 'c')
+    qc = QuantumCircuit(qr, cr)
+    
+    # data encoding circuit block (S(x))
+    encoded_x = phi_arcsin(x)
+    """qc.rx(scaling * encoded_x, qr[0])"""
+    
+    # trainable circuit block (U(theta))
+    # rotation around X, Y, and Z axes for trainable parameters
+    for theta in weights_reshaped[:-1]: # note that this loop is dependent on r (number of repetitions)
+        qc.rx(scaling * encoded_x, qr[0])  # after each rotation apply the data encoding again
+        qc.rx(theta[0], qr[0])
+        qc.ry(theta[1], qr[0])
+        qc.rz(theta[2], qr[0])
+
+    # L + 1-th rotation
+    theta = weights_reshaped[-1]
+    qc.rx(theta[0], qr[0])
+    qc.ry(theta[1], qr[0])
+    qc.rz(theta[2], qr[0])
+
+    qc.draw('text')
+    qc.measure(qr[0], cr[0])
+
+    simulator = BasicSimulator()
+    result = simulator.run(qc, shots=1024).result()
+
+    counts = result.get_counts(qc)
+    return counts.get('0', 0) / 1024
+
+
+# cost function for training
+def cost(weights, x, y):
+    predictions = [serial_quantum_model(weights, x=x_) for x_ in x]
+    loss = square_loss(y, predictions)
+    reg = 0.01 * np.sum(weights**2)  
+    return loss + reg
+
+
+max_steps = 5
+opt = COBYLA(maxiter=20, rhobeg=0.01)
+batch_size = 5
+
+
+r = 3  # number of repetitions (here also number of layers)
+weights = weights = 2*np.pi*np.random.random(size=(r+1, 3))# np.random.uniform(low=-np.pi, high=np.pi, size=(r + 1, 3)) # weights = 2 * np.pi * np.random.random(size=(r + 1, 3))  
+weights_flat = weights.ravel()
+
+x_normalized = (x - np.min(x)) / (np.max(x) - np.min(x))  
+target_y = (close_prices) / (np.max(close_prices))  
+
+
+cst = [cost(weights_flat, x_normalized, target_y)] 
+
+
+# training loop
+for step in range(max_steps):
+    print("Step {0:2}".format(step + 1))
+
+    batch_index = np.random.randint(0, len(x), (batch_size,))
+    x_batch = x_normalized[batch_index]
+    y_batch = target_y[batch_index]
+
+    result = opt.minimize(lambda w: cost(w, x_batch, y_batch), weights_flat)
+    weights_flat = result.x  
+
+    c = cost(weights_flat, x_normalized, target_y)
+    cst.append(c)
+
+    if (step + 1) % 10 == 0:
+        print("Cost at step {0:3}: {1}".format(step + 1, c))
+
+"""
+plt.figure(figsize=(10, 6))
+plt.plot(cst)
+plt.title("Cost function progression over training steps")
+plt.xlabel("Step")
+plt.ylabel("Cost")
+plt.show()
+"""
+predictions = [serial_quantum_model(weights_flat, x=x_) for x_ in x_normalized]
+
+plt.figure(figsize=(10, 6))
+plt.plot(x, target_y, c='black', label="Target")
+plt.plot(x, predictions, c='blue', linestyle='--', label="Prediction")
+plt.title("Predictions vs. Target")
+plt.xlabel("Time")
+plt.ylabel("Close price")
 plt.show()
